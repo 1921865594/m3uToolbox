@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     android:layout_height="match_parent"
+     android:layout_width="match_parent"
+     android:fillViewport="true">
+
+    <LinearLayout
+         android:layout_height="wrap_content"
+         android:layout_width="match_parent"
+         android:padding="16dp"
+         android:orientation="vertical">
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:text="tvg-id"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="例如：频道1"
+             android:id="@+id/editTvgId" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="tvg-name"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="频道名称"
+             android:id="@+id/editTvgName" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="tvg-logo"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="logo地址"
+             android:id="@+id/editTvgLogo" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="group-title"
+             android:textStyle="bold" />
+
+        <LinearLayout
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:orientation="horizontal"
+             android:layout_marginTop="4dp">
+
+            <Spinner
+                 android:layout_height="wrap_content"
+                 android:layout_width="0dp"
+                 android:layout_weight="1"
+                 android:id="@+id/spinnerGroupTitle">
+
+            </Spinner>
+
+            <Button
+                 android:layout_height="wrap_content"
+                 android:layout_width="wrap_content"
+                 android:paddingEnd="12dp"
+                 android:paddingStart="12dp"
+                 android:id="@+id/btnAddNewCategory"
+                 android:text="新增" />
+
+        </LinearLayout>
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="完整视频链接（含参数）"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="例如 http://example.com/stream.m3u8?param=value"
+             android:id="@+id/editUrl" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="User-Agent（请求头）"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="例如 ExoPlayer 或浏览器 UA"
+             android:inputType="textUri"
+             android:id="@+id/editUserAgent" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="Referer（请求头）"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="例如 https://example.com/"
+             android:inputType="textUri"
+             android:id="@+id/editReferer" />
+
+        <Button
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:layout_marginTop="24dp"
+             android:id="@+id/saveButton"
+             android:text="保存" />
+
+    </LinearLayout>
+
+</ScrollView>

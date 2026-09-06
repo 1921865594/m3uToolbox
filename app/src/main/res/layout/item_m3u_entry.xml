@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     android:layout_height="wrap_content"
+     android:layout_width="match_parent"
+     android:gravity="center_vertical"
+     android:padding="8dp"
+     android:orientation="horizontal">
+
+    <ImageView
+         android:layout_height="48dp"
+         android:layout_width="48dp"
+         android:scaleType="fitCenter"
+         android:contentDescription="频道Logo"
+         android:src="@android:drawable/ic_menu_gallery"
+         android:id="@+id/ivLogo" />
+
+    <LinearLayout
+         android:layout_height="wrap_content"
+         android:layout_width="0dp"
+         android:layout_marginEnd="8dp"
+         android:orientation="vertical"
+         android:layout_marginStart="8dp"
+         android:layout_weight="1">
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:textSize="16sp"
+             android:id="@+id/tvDisplayName"
+             android:textStyle="bold" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:textSize="12sp"
+             android:textColor="#555555"
+             android:id="@+id/tvTvgId" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:textSize="12sp"
+             android:textColor="#555555"
+             android:id="@+id/tvTvgName" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:textSize="12sp"
+             android:textColor="#555555"
+             android:id="@+id/tvTvgLogo" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:textSize="12sp"
+             android:textColor="#555555"
+             android:id="@+id/tvGroupTitle" />
+
+    </LinearLayout>
+
+    <Button
+         android:layout_height="wrap_content"
+         android:layout_width="wrap_content"
+         android:paddingEnd="12dp"
+         android:paddingStart="12dp"
+         android:minWidth="48dp"
+         android:id="@+id/btnPlay"
+         android:text="播放" />
+
+    <CheckBox
+         android:layout_height="wrap_content"
+         android:layout_width="wrap_content"
+         android:visibility="gone"
+         android:id="@+id/checkBox" />
+
+</LinearLayout>

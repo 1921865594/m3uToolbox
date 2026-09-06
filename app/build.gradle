@@ -1,0 +1,92 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace 'com.m3utoolbox'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.m3utoolbox'
+        minSdk 28
+        targetSdk 34
+        versionCode 101
+        versionName "1.1"
+
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+
+    compileOptions {
+        // FFmpeg Media3 AAR 需要 core library desugaring。
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
+    }
+
+    packaging {
+        resources {
+            excludes += ['/META-INF/{AL2.0,LGPL2.1}']
+        }
+
+        // FFmpeg JNI 扩展可能存在重复的 native 库。
+        jniLibs {
+            pickFirsts += ['**/libffmpegJNI.so']
+            keepDebugSymbols += ['**/libffmpegJNI.so']
+        }
+    }
+}
+
+// media3-ffmpeg-decoder 本地 AAR 完整性检查。
+// 用户提供的 AAR 如果损坏，则自动回退到 Maven Central 的同版本 artifact。
+def localFfmpegAar = file('libs/media3-ffmpeg-decoder-1.3.1+2.aar')
+def localFfmpegAarValid = false
+if (localFfmpegAar.isFile()) {
+    try {
+        new java.util.zip.ZipFile(localFfmpegAar).withCloseable { zip ->
+            if (!zip.entries().hasMoreElements()) {
+                throw new java.util.zip.ZipException('AAR is empty')
+            }
+        }
+        localFfmpegAarValid = true
+    } catch (Exception e) {
+        logger.warn("本地 media3-ffmpeg-decoder AAR 无法读取，将回退 Maven Central: ${e.message}")
+    }
+}
+
+dependencies {
+    implementation libs.androidx.core.ktx
+    implementation libs.androidx.appcompat
+    implementation libs.material
+    implementation libs.androidx.constraintlayout
+
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+
+    // 与提供的 media3-ffmpeg-decoder-1.3.1+2.aar 保持完全一致。
+    implementation 'androidx.media3:media3-exoplayer:1.3.1'
+    implementation 'androidx.media3:media3-ui:1.3.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.3.1'
+    implementation 'androidx.media3:media3-exoplayer-rtsp:1.3.1'
+
+    // Jellyfin FFmpeg 扩展：优先使用 app/libs 中提供的 1.3.1+2 AAR；
+    // 如果 AAR 损坏，则回退到 Maven Central 的完全相同版本。
+    if (localFfmpegAarValid) {
+        implementation files(localFfmpegAar)
+    } else {
+        implementation 'org.jellyfin.media3:media3-ffmpeg-decoder:1.3.1+2'
+    }
+
+    // media3-ffmpeg-decoder 要求启用 core library desugaring。
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+}
