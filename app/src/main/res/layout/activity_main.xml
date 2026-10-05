@@ -86,8 +86,49 @@
                  android:layout_height="wrap_content"
                  android:layout_width="wrap_content"
                  android:padding="8dp"
+                 android:id="@+id/searchButton"
+                 android:text="查找" />
+
+            <Button
+                 android:layout_height="wrap_content"
+                 android:layout_width="wrap_content"
+                 android:padding="8dp"
                  android:id="@+id/selectButton"
                  android:text="勾选" />
+
+        </LinearLayout>
+
+        <!-- 搜索栏：默认隐藏，点击"查找"按钮后展开 -->
+        <LinearLayout
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:padding="4dp"
+             android:orientation="horizontal"
+             android:visibility="gone"
+             android:id="@+id/searchBar">
+
+            <EditText
+                 android:layout_height="wrap_content"
+                 android:layout_width="0dp"
+                 android:layout_weight="1"
+                 android:hint="输入频道名称查找"
+                 android:singleLine="true"
+                 android:inputType="text"
+                 android:id="@+id/searchEditText" />
+
+            <Button
+                 android:layout_height="wrap_content"
+                 android:layout_width="wrap_content"
+                 android:padding="8dp"
+                 android:id="@+id/searchNextButton"
+                 android:text="下一个" />
+
+            <Button
+                 android:layout_height="wrap_content"
+                 android:layout_width="wrap_content"
+                 android:padding="8dp"
+                 android:id="@+id/searchCloseButton"
+                 android:text="关闭" />
 
         </LinearLayout>
 

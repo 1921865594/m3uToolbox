@@ -1,6 +1,7 @@
 package com.m3utoolbox
 
 import java.io.Serializable
+import java.util.UUID
 
 data class M3UFile(
     val headerParams: MutableList<HeaderParam> = mutableListOf(),
@@ -17,7 +18,14 @@ data class Category(
     val channels: MutableList<Channel> = mutableListOf()
 )
 
-data class Channel(
+/**
+ * 频道模型。
+ *
+ * 注意：这里改成了普通 class，并使用基于 uid 的 equals / hashCode，
+ * 目的：复制出来的"参数完全相同"的频道在勾选集合中仍被视为两个不同的对象，
+ * 否则用 data class 的自动 equals，复制频道与原频道会因为属性相同而被合并。
+ */
+class Channel(
     var displayName: String = "",
     var url: String = "",
     val extinfAttributes: MutableMap<String, String> = mutableMapOf(),
@@ -39,6 +47,19 @@ data class Channel(
     var userAgent: String? = null,
     var referer: String? = null
 ) : Serializable {
+
+    /**
+     * 每个 Channel 实例的唯一身份标识。确保复制出的相同参数频道也不会被合并。
+     */
+    val uid: String = UUID.randomUUID().toString()
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Channel) return false
+        return uid == other.uid
+    }
+
+    override fun hashCode(): Int = uid.hashCode()
 
     /**
      * 返回播放所需的完整 URL。

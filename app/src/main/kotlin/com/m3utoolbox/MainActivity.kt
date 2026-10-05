@@ -24,6 +24,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.widget.addTextChangedListener
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -42,10 +43,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var addCategoryButton: Button
     private lateinit var addChannelButton: Button
     private lateinit var selectButton: Button
+    private lateinit var searchButton: Button
+    private lateinit var searchBar: LinearLayout
+    private lateinit var searchEditText: EditText
+    private lateinit var searchNextButton: Button
+    private lateinit var searchCloseButton: Button
 
     private lateinit var adapter: M3UAdapter
     private lateinit var itemTouchHelper: ItemTouchHelper
     private val m3uFile = M3UFile()
+
+    private var lastSearchMatchIndex: Int = -1
 
     private val openDocumentLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { importM3U(it) }
@@ -62,20 +70,27 @@ class MainActivity : AppCompatActivity() {
             val originalChannelIndex = result.data?.getIntExtra("original_channel_index", -1) ?: -1
 
             if (editedChannel != null) {
-                // 获取编辑后频道的目标分类名（来自 group-title 属性）
-                val newGroupTitle = editedChannel.extinfAttributes["group-title"]
+                val newGroupTitle = editedChannel.extinfAttributes["group-title"] ?: "未分类"
 
-                // 如果是编辑已有频道，先从原位置移除旧频道
-                if (originalCategoryIndex >= 0 && originalChannelIndex >= 0 &&
-                    originalCategoryIndex < m3uFile.categories.size &&
-                    originalChannelIndex < m3uFile.categories[originalCategoryIndex].channels.size
-                ) {
-                    val oldCategory = m3uFile.categories[originalCategoryIndex]
-                    oldCategory.channels.removeAt(originalChannelIndex)
+                val hasValidOriginal = originalCategoryIndex >= 0 && originalChannelIndex >= 0 &&
+                        originalCategoryIndex < m3uFile.categories.size &&
+                        originalChannelIndex < m3uFile.categories[originalCategoryIndex].channels.size
+
+                val oldCategoryName = if (hasValidOriginal) {
+                    m3uFile.categories[originalCategoryIndex].name
+                } else null
+
+                if (hasValidOriginal && oldCategoryName == newGroupTitle) {
+                    // 分类未改变：原地替换，保持列表里的原有位置不变
+                    m3uFile.categories[originalCategoryIndex].channels[originalChannelIndex] = editedChannel
+                    adapter.refreshItems()
+                } else {
+                    // 分类改变或新增：从原位置移除，添加到目标分类
+                    if (hasValidOriginal) {
+                        m3uFile.categories[originalCategoryIndex].channels.removeAt(originalChannelIndex)
+                    }
+                    addChannelToCategory(editedChannel, newGroupTitle)
                 }
-
-                // 添加（或移动）频道到目标分类，若分类不存在则自动创建
-                addChannelToCategory(editedChannel, newGroupTitle)
             }
         }
     }
@@ -108,6 +123,11 @@ class MainActivity : AppCompatActivity() {
         addCategoryButton = findViewById(R.id.addCategoryButton)
         addChannelButton = findViewById(R.id.addChannelButton)
         selectButton = findViewById(R.id.selectButton)
+        searchButton = findViewById(R.id.searchButton)
+        searchBar = findViewById(R.id.searchBar)
+        searchEditText = findViewById(R.id.searchEditText)
+        searchNextButton = findViewById(R.id.searchNextButton)
+        searchCloseButton = findViewById(R.id.searchCloseButton)
 
         recyclerView.layoutManager = LinearLayoutManager(this)
 
@@ -136,6 +156,78 @@ class MainActivity : AppCompatActivity() {
             adapter.setSelectionMode(!currentlySelection)
             selectButton.text = if (currentlySelection) "勾选" else "取消勾选"
         }
+
+        // 查找功能
+        searchButton.setOnClickListener {
+            if (searchBar.visibility == View.VISIBLE) {
+                closeSearchBar()
+            } else {
+                searchBar.visibility = View.VISIBLE
+                searchEditText.requestFocus()
+            }
+        }
+
+        searchEditText.addTextChangedListener { text ->
+            val query = text?.toString()?.trim().orEmpty()
+            if (query.isNotEmpty()) {
+                lastSearchMatchIndex = -1
+                findAndLocate(query, searchNext = false)
+            }
+        }
+
+        searchNextButton.setOnClickListener {
+            val query = searchEditText.text.toString().trim()
+            if (query.isEmpty()) {
+                Toast.makeText(this, "请输入搜索内容", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            findAndLocate(query, searchNext = true)
+        }
+
+        searchCloseButton.setOnClickListener {
+            closeSearchBar()
+        }
+    }
+
+    private fun closeSearchBar() {
+        searchEditText.setText("")
+        lastSearchMatchIndex = -1
+        searchBar.visibility = View.GONE
+    }
+
+    private fun findAndLocate(query: String, searchNext: Boolean) {
+        val flatItems = adapter.getFlatItems()
+        val lowerQuery = query.lowercase()
+
+        val matches = flatItems.indices.filter { i ->
+            val item = flatItems[i]
+            item is Channel && item.displayName.lowercase().contains(lowerQuery)
+        }
+
+        if (matches.isEmpty()) {
+            Toast.makeText(this, "未找到包含「$query」的频道", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val targetIndex: Int
+        if (searchNext && lastSearchMatchIndex >= 0) {
+            val posInMatches = matches.indexOf(lastSearchMatchIndex)
+            targetIndex = if (posInMatches == -1 || posInMatches == matches.size - 1) {
+                matches[0]
+            } else {
+                matches[posInMatches + 1]
+            }
+        } else {
+            targetIndex = matches[0]
+        }
+
+        lastSearchMatchIndex = targetIndex
+        recyclerView.scrollToPosition(targetIndex)
+        Toast.makeText(
+            this,
+            "已定位: ${(flatItems[targetIndex] as Channel).displayName}",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun playChannel(channel: Channel) {
@@ -221,24 +313,18 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    /**
-     * 点击"新增频道"按钮后，弹出分类选择对话框，
-     * 底部显示"粘贴原数据自动解析"按钮，点击后打开粘贴文本弹窗。
-     */
     private fun showAddChannelDialog() {
         val categoryNames = m3uFile.categories.map { it.name }.toMutableList()
         if (categoryNames.isEmpty()) {
             categoryNames.add("未分类")
         }
 
-        val context = this
-
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 16, 24, 16)
         }
 
-        val label = android.widget.TextView(this).apply {
+        val label = TextView(this).apply {
             text = "选择分类："
             setPadding(0, 0, 0, 8)
         }
@@ -254,7 +340,6 @@ class MainActivity : AppCompatActivity() {
             text = "粘贴原数据自动解析"
             setPadding(16, 12, 16, 12)
             setOnClickListener {
-                // 关闭当前对话框，打开"新增频道(粘贴文本)"弹窗
                 showAddChannelFromTextDialog(selectedCategoryName = spinner.selectedItem.toString())
             }
         }
@@ -264,7 +349,6 @@ class MainActivity : AppCompatActivity() {
             .setTitle("新增频道")
             .setView(layout)
             .setPositiveButton("手动填写") { _, _ ->
-                // 手动填写：打开 ChannelEditActivity
                 val selectedCategoryName = spinner.selectedItem.toString()
                 val intent = Intent(this, ChannelEditActivity::class.java).apply {
                     putExtra(ChannelEditActivity.EXTRA_TARGET_CATEGORY_NAME, selectedCategoryName)
@@ -276,12 +360,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * 粘贴原数据自动解析弹窗 - 复用原有解析逻辑。
-     */
     private fun showAddChannelFromTextDialog(selectedCategoryName: String) {
-        val context = this
-
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 24, 48, 24)
@@ -291,10 +370,10 @@ class MainActivity : AppCompatActivity() {
             hint = "粘贴频道参数，例如：\n#EXTINF:-1 tvg-id=\"1\" tvg-name=\"CCTV1\" tvg-logo=\"http://logo.png\" group-title=\"央视\",CCTV1\nhttp://example.com/cctv1.m3u8"
             minLines = 5
             maxLines = 10
-            gravity = android.view.Gravity.TOP
+            gravity = Gravity.TOP
         }
 
-        val label = android.widget.TextView(this).apply {
+        val label = TextView(this).apply {
             text = "选择分类：$selectedCategoryName"
             setPadding(0, 0, 0, 8)
         }
@@ -308,18 +387,18 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("确认") { _, _ ->
                 val text = editText.text.toString().trim()
                 if (text.isEmpty()) {
-                    Toast.makeText(context, "请输入频道参数", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "请输入频道参数", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
 
                 val channel = parseChannelFromText(text)
                 if (channel == null) {
-                    Toast.makeText(context, "解析失败，请检查格式", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "解析失败，请检查格式", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
 
                 addChannelToCategory(channel, selectedCategoryName)
-                Toast.makeText(context, "新增成功", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "新增成功", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("取消", null)
             .show()
@@ -330,10 +409,6 @@ class MainActivity : AppCompatActivity() {
         return parsed.categories.firstOrNull()?.channels?.firstOrNull()
     }
 
-    /**
-     * 去重检查：遍历所有频道的完整视频链接，找出重复的 URL，
-     * 弹出对话框让用户选择删除哪个频道。
-     */
     private fun startDedupCheck() {
         if (m3uFile.categories.isEmpty()) {
             Toast.makeText(this, "没有频道数据", Toast.LENGTH_SHORT).show()
@@ -361,7 +436,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        Log.d("MainActivity", "发现 ${duplicates.size} 组重复链接")
         showDedupSelectionDialog(duplicates)
     }
 
@@ -394,15 +468,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        Log.d("MainActivity", "展平列表项数: ${displayItems.size}")
-
         val listView = ListView(this)
 
         val customAdapter = object : BaseAdapter() {
             override fun getCount(): Int = displayItems.size
-
             override fun getItem(position: Int): Any = displayItems[position]
-
             override fun getItemId(position: Int): Long = position.toLong()
 
             override fun getItemViewType(position: Int): Int {
@@ -410,7 +480,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun getViewTypeCount(): Int = 2
-
             override fun isEnabled(position: Int): Boolean = displayItems[position] is DedupInfo
 
             override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
@@ -450,7 +519,7 @@ class MainActivity : AppCompatActivity() {
         listView.adapter = customAdapter
         listView.choiceMode = ListView.CHOICE_MODE_MULTIPLE
 
-        val dialog = AlertDialog.Builder(this)
+        AlertDialog.Builder(this)
             .setTitle("发现重复频道，请勾选要删除的频道")
             .setView(listView)
             .setPositiveButton("删除选中") { _, _ ->
@@ -466,8 +535,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-
-                Log.d("MainActivity", "选中删除 ${toDelete.size} 个频道")
 
                 for (dedupInfo in toDelete) {
                     for (category in m3uFile.categories) {
@@ -485,15 +552,15 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("取消", null)
             .create()
-
-        dialog.show()
+            .also { it.show() }
     }
 
-    // DedupInfo 数据类 - 用于去重功能
     data class DedupInfo(
         val categoryName: String,
         val channel: Channel
     )
+
+    // ===================== 拖拽支持 =====================
 
     private fun setupItemTouchHelper() {
         itemTouchHelper = ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
@@ -508,31 +575,43 @@ class MainActivity : AppCompatActivity() {
                 if (!adapter.isSelectionMode()) return false
                 val fromPosition = viewHolder.bindingAdapterPosition
                 val toPosition = target.bindingAdapterPosition
-                if (fromPosition == RecyclerView.NO_POSITION || toPosition == RecyclerView.NO_POSITION) return false
+                if (fromPosition == RecyclerView.NO_POSITION || toPosition == RecyclerView.NO_POSITION) {
+                    return false
+                }
 
-                val fromItem = adapter.getFlatItems()[fromPosition]
-                if (fromItem !is Channel || !adapter.getSelectedChannels().contains(fromItem)) return false
+                val flatItems = adapter.getFlatItems()
+                if (fromPosition >= flatItems.size || toPosition >= flatItems.size) return false
+
+                val fromItem = flatItems[fromPosition]
+                // 只允许拖拽被勾选的频道
+                if (fromItem !is Channel || !adapter.getSelectedChannels().contains(fromItem)) {
+                    return false
+                }
 
                 adapter.moveItem(fromPosition, toPosition)
                 return true
             }
 
-            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
-                // 不处理滑动
-            }
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {}
 
-            override fun isLongPressDragEnabled(): Boolean {
-                return false
-            }
+            override fun isLongPressDragEnabled(): Boolean = false
 
             override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
                 super.clearView(recyclerView, viewHolder)
-                applyMoveResult()
+                // 放下：聚拢其他选中项 + 重建分类 + 刷新
+                adapter.finalizeMove()
             }
 
-            override fun getMovementFlags(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder): Int {
+            override fun getMovementFlags(
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder
+            ): Int {
                 if (!adapter.isSelectionMode()) return 0
-                val item = adapter.getFlatItems()[viewHolder.bindingAdapterPosition]
+                val pos = viewHolder.bindingAdapterPosition
+                if (pos == RecyclerView.NO_POSITION) return 0
+                val flatItems = adapter.getFlatItems()
+                if (pos >= flatItems.size) return 0
+                val item = flatItems[pos]
                 if (item is Channel && adapter.getSelectedChannels().contains(item)) {
                     return makeMovementFlags(ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0)
                 }
@@ -540,79 +619,6 @@ class MainActivity : AppCompatActivity() {
             }
         })
         itemTouchHelper.attachToRecyclerView(recyclerView)
-    }
-
-    private fun applyMoveResult() {
-        val dragging = adapter.draggingChannel ?: run {
-            adapter.refreshItems()
-            return
-        }
-        val selected = adapter.getSelectedChannels()
-        if (selected.isEmpty()) {
-            adapter.applyCurrentOrder()
-            adapter.refreshItems()
-            return
-        }
-        val flatItems = adapter.getFlatItems()
-        val targetIndex = flatItems.indexOf(dragging)
-        if (targetIndex == -1) {
-            adapter.applyCurrentOrder()
-            adapter.refreshItems()
-            return
-        }
-        for (channel in selected) {
-            for (category in m3uFile.categories) {
-                if (category.channels.remove(channel)) {
-                    break
-                }
-            }
-        }
-        val targetCategory: Category
-        val insertIndex: Int
-        var categoryIndex = -1
-        for (i in targetIndex downTo 0) {
-            if (flatItems[i] is Category) {
-                categoryIndex = i
-                break
-            }
-        }
-        if (categoryIndex == -1) {
-            targetCategory = m3uFile.categories.firstOrNull() ?: Category("未分类").also { m3uFile.categories.add(it) }
-            insertIndex = 0
-        } else {
-            val targetCat = flatItems[categoryIndex] as Category
-            targetCategory = m3uFile.categories.find { it.name == targetCat.name } ?: targetCat
-            var posInCategory = 0
-            for (i in categoryIndex + 1 until targetIndex) {
-                if (flatItems[i] is Channel) {
-                    posInCategory++
-                }
-            }
-            insertIndex = posInCategory
-        }
-        targetCategory.channels.addAll(insertIndex, selected)
-        adapter.applyCurrentOrder()
-        adapter.refreshItems()
-        Toast.makeText(this, "移动成功", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun showChannelLongClickMenu(channel: Channel, view: View) {
-        if (!adapter.isSelectionMode() || !adapter.getSelectedChannels().contains(channel)) {
-            return
-        }
-        val popup = PopupMenu(this, view)
-        popup.menu.add("删除")
-        popup.menu.add("移动")
-        popup.menu.add("导出")
-        popup.setOnMenuItemClickListener { item: MenuItem ->
-            when (item.title.toString()) {
-                "删除" -> deleteSelectedChannels()
-                "移动" -> startDragForChannel(channel)
-                "导出" -> exportSelectedChannels()
-            }
-            true
-        }
-        popup.show()
     }
 
     private fun startDragForChannel(channel: Channel) {
@@ -624,7 +630,73 @@ class MainActivity : AppCompatActivity() {
         val viewHolder = recyclerView.findViewHolderForAdapterPosition(position)
         if (viewHolder != null) {
             itemTouchHelper.startDrag(viewHolder)
+            Toast.makeText(this, "可拖动到任意位置", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "请稍后重试", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // ===================== 长按菜单 =====================
+
+    /**
+     * 长按频道：
+     * - 未进入勾选模式 / 未勾选当前频道：只显示"复制"
+     * - 已进入勾选模式且当前频道被勾选：显示"复制 + 批量删除 / 移动（拖拽）/ 导出"
+     */
+    private fun showChannelLongClickMenu(channel: Channel, view: View) {
+        val popup = PopupMenu(this, view)
+        val inSelectionMode = adapter.isSelectionMode()
+        val isSelected = adapter.getSelectedChannels().contains(channel)
+        val selectedCount = adapter.getSelectedChannels().size
+
+        // 任何情况下都允许复制
+        popup.menu.add("复制")
+
+        if (inSelectionMode && isSelected) {
+            if (selectedCount > 1) {
+                popup.menu.add("删除选中(${selectedCount})")
+                popup.menu.add("移动选中(${selectedCount})")
+                popup.menu.add("导出选中(${selectedCount})")
+            } else {
+                popup.menu.add("删除")
+                popup.menu.add("移动")
+                popup.menu.add("导出")
+            }
+        }
+
+        popup.setOnMenuItemClickListener { item: MenuItem ->
+            val title = item.title.toString()
+            when {
+                title.startsWith("删除") -> deleteSelectedChannels()
+                title.startsWith("移动") -> startDragForChannel(channel)
+                title.startsWith("导出") -> exportSelectedChannels()
+                title == "复制" -> copyChannel(channel)
+            }
+            true
+        }
+        popup.show()
+    }
+
+    private fun copyChannel(channel: Channel) {
+        val copy = Channel(
+            displayName = channel.displayName,
+            url = channel.url,
+            originalUrl = channel.originalUrl,
+            userAgent = channel.userAgent,
+            referer = channel.referer
+        )
+        copy.extinfAttributes.putAll(channel.extinfAttributes)
+        copy.urlParams.putAll(channel.urlParams)
+
+        val category = m3uFile.categories.find { it.channels.contains(channel) }
+        if (category == null) {
+            Toast.makeText(this, "找不到频道所在分类", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val idx = category.channels.indexOf(channel)
+        category.channels.add(idx + 1, copy)
+        adapter.refreshItems()
+        Toast.makeText(this, "已复制频道", Toast.LENGTH_SHORT).show()
     }
 
     private fun deleteSelectedChannels() {
@@ -830,37 +902,6 @@ class MainActivity : AppCompatActivity() {
         channelEditLauncher.launch(intent)
     }
 
-    private fun deleteChannel(channel: Channel) {
-        AlertDialog.Builder(this)
-            .setTitle("删除频道")
-            .setMessage("确定删除频道 ${channel.displayName}?")
-            .setPositiveButton("删除") { _, _ ->
-                val category = m3uFile.categories.find { it.channels.contains(channel) }
-                category?.channels?.remove(channel)
-                adapter.refreshItems()
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun replaceChannelAt(categoryIndex: Int, channelIndex: Int, edited: Channel) {
-        if (categoryIndex !in m3uFile.categories.indices) {
-            Toast.makeText(this, "保存失败：原频道分类不存在", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val category = m3uFile.categories[categoryIndex]
-        if (channelIndex !in category.channels.indices) {
-            Toast.makeText(this, "保存失败：原频道不存在", Toast.LENGTH_SHORT).show()
-            return
-        }
-        category.channels[channelIndex] = edited
-        adapter.refreshItems()
-        Toast.makeText(this, "频道保存成功", Toast.LENGTH_SHORT).show()
-    }
-
-    /**
-     * 将频道添加到指定分类。若分类不存在，则自动创建该分类。
-     */
     private fun addChannelToCategory(channel: Channel, categoryName: String?) {
         val targetCategoryName = categoryName ?: "未分类"
         var category = m3uFile.categories.find { it.name == targetCategoryName }
