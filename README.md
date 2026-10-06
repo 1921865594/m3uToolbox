@@ -78,7 +78,7 @@
 2. **解析与导出（核心设计）**  
    - 解析时**完整保留 URL 行原始内容**（仅去除首尾空白），避免重编码导致参数丢失或顺序变化  
    - 播放与导出一律优先使用 `Channel.originalUrl`（通过 `getFullUrl()`）  
-   - 支持 `#EXTVLCOPT:http-user-agent` 与 `#EXTVLCOPT:http-referer` 解析并绑定到频道  
+   - 支持 `#EXTVLCOPT:http-user-agent`、`#EXTVLCOPT:http-referrer` 及 `#EXTVLCOPT:http-header=Header: Value` 解析并绑定到频道  
    - 正确处理 BOM、空行、各种 EXTINF 属性
 
 3. **UI 与交互**  
@@ -88,7 +88,7 @@
 
 4. **播放**  
    - 使用 Media3 ExoPlayer，配合 FFmpeg 扩展以获得更广的编码支持  
-   - 播放时传入频道级 User-Agent 与 Referer
+   - 播放时使用 OkHttpDataSource，将频道级 User-Agent / Referer / Origin / Host / Connection / 自定义请求头用于 HLS 主清单及分片请求
 
 ### 免责声明
 
@@ -133,7 +133,7 @@ Typical use cases:
   - Add, edit, delete channels
   - Manual entry or paste raw M3U snippets for auto-parsing
   - Edit `tvg-id`, `tvg-name`, `tvg-logo`, `group-title`, and stream URL
-  - Per-channel User-Agent and Referer
+  - Per-channel User-Agent, Referer, Origin, Host, Connection, and arbitrary custom HTTP headers
 - **Drag-and-drop reordering**
 - **Multi-select & deduplication**
 - **Built-in player**: Media3 ExoPlayer with FFmpeg extension decoder, supporting HLS, RTSP, and more
@@ -184,7 +184,7 @@ The local FFmpeg AAR (`app/libs/media3-ffmpeg-decoder-1.3.1+2.aar`) is preferred
 
 4. **Playback**  
    - Media3 ExoPlayer with FFmpeg extension for broader codec support  
-   - Per-channel User-Agent and Referer are applied at playback time
+   - Per-channel User-Agent, Referer, Origin, Host, Connection, and arbitrary custom HTTP headers are applied at playback time
 
 ### Disclaimer
 

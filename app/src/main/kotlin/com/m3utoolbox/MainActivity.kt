@@ -66,30 +66,60 @@ class MainActivity : AppCompatActivity() {
     private val channelEditLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
             val editedChannel = result.data?.getSerializableExtra(ChannelEditActivity.EXTRA_RESULT_CHANNEL) as? Channel
+            val originalUid = result.data?.getStringExtra("original_channel_uid")
             val originalCategoryIndex = result.data?.getIntExtra("original_category_index", -1) ?: -1
             val originalChannelIndex = result.data?.getIntExtra("original_channel_index", -1) ?: -1
 
             if (editedChannel != null) {
                 val newGroupTitle = editedChannel.extinfAttributes["group-title"] ?: "未分类"
 
-                val hasValidOriginal = originalCategoryIndex >= 0 && originalChannelIndex >= 0 &&
-                        originalCategoryIndex < m3uFile.categories.size &&
-                        originalChannelIndex < m3uFile.categories[originalCategoryIndex].channels.size
-
-                val oldCategoryName = if (hasValidOriginal) {
-                    m3uFile.categories[originalCategoryIndex].name
-                } else null
-
-                if (hasValidOriginal && oldCategoryName == newGroupTitle) {
-                    // 分类未改变：原地替换，保持列表里的原有位置不变
-                    m3uFile.categories[originalCategoryIndex].channels[originalChannelIndex] = editedChannel
-                    adapter.refreshItems()
-                } else {
-                    // 分类改变或新增：从原位置移除，添加到目标分类
-                    if (hasValidOriginal) {
-                        m3uFile.categories[originalCategoryIndex].channels.removeAt(originalChannelIndex)
+                // 首选稳定 uid 定位真实的 Channel 实例。
+                // 这样即使 RecyclerView/拖拽/分类移动改变了索引，也一定更新正在导出的对象。
+                var existingCategoryIndex = -1
+                var existingChannelIndex = -1
+                if (!originalUid.isNullOrBlank()) {
+                    loop@ for (ci in m3uFile.categories.indices) {
+                        val idx = m3uFile.categories[ci].channels.indexOfFirst { it.uid == originalUid }
+                        if (idx >= 0) {
+                            existingCategoryIndex = ci
+                            existingChannelIndex = idx
+                            break@loop
+                        }
                     }
-                    addChannelToCategory(editedChannel, newGroupTitle)
+                }
+
+                // 兼容没有 uid 的旧编辑结果。
+                if (existingCategoryIndex < 0) {
+                    val valid = originalCategoryIndex >= 0 && originalChannelIndex >= 0 &&
+                            originalCategoryIndex < m3uFile.categories.size &&
+                            originalChannelIndex < m3uFile.categories[originalCategoryIndex].channels.size
+                    if (valid) {
+                        existingCategoryIndex = originalCategoryIndex
+                        existingChannelIndex = originalChannelIndex
+                    }
+                }
+
+                if (existingCategoryIndex >= 0) {
+                    val existingCategory = m3uFile.categories[existingCategoryIndex]
+                    val existingChannel = existingCategory.channels[existingChannelIndex]
+                    val oldCategoryName = existingCategory.name
+
+                    // 原地覆盖：selectedChannels、RecyclerView、m3uFile、导出全部继续引用这个实例。
+                    existingChannel.overwriteFrom(editedChannel)
+
+                    if (oldCategoryName == newGroupTitle) {
+                        adapter.refreshItems()
+                    } else {
+                        existingCategory.channels.removeAt(existingChannelIndex)
+                        addChannelToCategory(existingChannel, newGroupTitle)
+                    }
+                } else {
+                    // 编辑已有频道时绝不能静默新增，否则旧频道（包括旧请求头）会继续存在。
+                    if (!originalUid.isNullOrBlank()) {
+                        Toast.makeText(this, "保存失败：找不到原频道，未创建重复频道", Toast.LENGTH_LONG).show()
+                    } else {
+                        addChannelToCategory(editedChannel, newGroupTitle)
+                    }
                 }
             }
         }
@@ -240,6 +270,7 @@ class MainActivity : AppCompatActivity() {
             putExtra("video_url", url)
             putExtra("user_agent", channel.userAgent)
             putExtra("referer", channel.referer)
+            putExtra("request_headers", HashMap(channel.getRequestHeaders()))
         }
         startActivity(intent)
     }
@@ -687,6 +718,7 @@ class MainActivity : AppCompatActivity() {
         )
         copy.extinfAttributes.putAll(channel.extinfAttributes)
         copy.urlParams.putAll(channel.urlParams)
+        copy.requestHeaders.addAll(channel.requestHeaders.map { HeaderParam(it.key, it.value) })
 
         val category = m3uFile.categories.find { it.channels.contains(channel) }
         if (category == null) {
@@ -897,6 +929,7 @@ class MainActivity : AppCompatActivity() {
             putExtra(ChannelEditActivity.EXTRA_CHANNEL, channel)
             putExtra("original_category_index", categoryIndex)
             putExtra("original_channel_index", channelIndex)
+            putExtra("original_channel_uid", channel.uid)
             putStringArrayListExtra("category_list", ArrayList(categoryNames))
         }
         channelEditLauncher.launch(intent)

@@ -20,13 +20,20 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -48,8 +55,21 @@ class PlayerActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "PlayerActivity"
-        private const val DEFAULT_USER_AGENT = "ExoPlayer"
+        private const val DEFAULT_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
         private const val DEFAULT_TIMEOUT_MS = 15_000
+
+        /**
+         * HLS CDN 常把鉴权参数放在主播放列表 URL 上，并在分片 URI 中省略。
+         * 这些参数需要在同源、无 query 的子请求上继承。
+         */
+        private val HLS_AUTH_QUERY_KEYS = setOf(
+            "sign", "sig", "token", "auth", "authorization",
+            "key", "expires", "expire", "exp", "t", "ts",
+            "timestamp", "svrtime", "ytime", "ysign",
+            "nonce", "session", "sid", "hmac", "md5", "hdnts"
+        )
 
         private const val APTV_USER_AGENT =
             "AptvPlayer/1.4.25 (iPhone; CPU iPhone OS 26.3.1) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
@@ -65,6 +85,10 @@ class PlayerActivity : AppCompatActivity() {
 
     private var currentUserAgent: String? = null
     private var currentReferer: String? = null
+    private var currentRequestHeaders: Map<String, String> = emptyMap()
+
+    /** 首选 OkHttp；遇到部分 CDN/压缩/HTTP 兼容问题时自动切到 HttpURLConnection。 */
+    private var useLegacyHttpTransport = false
 
     private var currentVideoMimeType: String = ""
     private var currentVideoDecoder: String = ""
@@ -101,7 +125,8 @@ class PlayerActivity : AppCompatActivity() {
                                     uri = uri,
                                     contentType = C.CONTENT_TYPE_HLS,
                                     userAgent = currentUserAgent,
-                                    referer = currentReferer
+                                    referer = currentReferer,
+                                    requestHeaders = currentRequestHeaders
                                 )
                             }
 
@@ -110,7 +135,8 @@ class PlayerActivity : AppCompatActivity() {
                                     uri = uri,
                                     contentType = C.CONTENT_TYPE_OTHER,
                                     userAgent = currentUserAgent,
-                                    referer = currentReferer
+                                    referer = currentReferer,
+                                    requestHeaders = currentRequestHeaders
                                 )
                             }
 
@@ -121,7 +147,31 @@ class PlayerActivity : AppCompatActivity() {
                     }
                 }
 
-                else -> showPlaybackError(error)
+                else -> {
+                    val isHls = player?.currentMediaItem?.localConfiguration?.uri?.let {
+                        Util.inferContentType(it) == C.CONTENT_TYPE_HLS
+                    } == true
+
+                    // OkHttp 与 HttpURLConnection 对 Accept-Encoding、Connection、某些 CDN
+                    // 的响应处理存在差异。第一次网络/清单错误时自动换传输栈再试一次。
+                    if (isHls && !useLegacyHttpTransport && shouldRetryWithLegacyTransport(error)) {
+                        val uri = player?.currentMediaItem?.localConfiguration?.uri
+                        if (uri != null) {
+                            Log.w(TAG, "OkHttp HLS 请求失败，切换到 HttpURLConnection 重试: ${error.errorCodeName}")
+                            useLegacyHttpTransport = true
+                            contentTypeAttempts[C.CONTENT_TYPE_HLS] = true
+                            preparePlayer(
+                                uri = uri,
+                                contentType = C.CONTENT_TYPE_HLS,
+                                userAgent = currentUserAgent,
+                                referer = currentReferer,
+                                requestHeaders = currentRequestHeaders
+                            )
+                            return
+                        }
+                    }
+                    showPlaybackError(error)
+                }
             }
         }
 
@@ -208,6 +258,7 @@ class PlayerActivity : AppCompatActivity() {
         val fullUrl = intent.getStringExtra("video_url").orEmpty().trim()
         val inputUserAgent = intent.getStringExtra("user_agent")?.trim()
         val inputReferer = intent.getStringExtra("referer")?.trim()
+        val inputRequestHeaders = readRequestHeadersExtra()
 
         if (fullUrl.isBlank()) {
             Toast.makeText(this, "视频链接为空", Toast.LENGTH_SHORT).show()
@@ -217,6 +268,11 @@ class PlayerActivity : AppCompatActivity() {
 
         currentUserAgent = inputUserAgent
         currentReferer = inputReferer
+        currentRequestHeaders = mergeRequestHeaders(
+            inputRequestHeaders,
+            inputUserAgent,
+            inputReferer
+        )
 
         val uri = runCatching { Uri.parse(fullUrl) }.getOrElse {
             Toast.makeText(this, "视频链接格式错误", Toast.LENGTH_SHORT).show()
@@ -250,12 +306,14 @@ class PlayerActivity : AppCompatActivity() {
         exoPlayer.addAnalyticsListener(eventLogger)
 
         contentTypeAttempts.clear()
+        useLegacyHttpTransport = false
 
         preparePlayer(
             uri = uri,
             contentType = Util.inferContentType(uri),
             userAgent = inputUserAgent,
-            referer = inputReferer
+            referer = inputReferer,
+            requestHeaders = currentRequestHeaders
         )
 
         // 返回键：全屏时先退出全屏，否则退出播放器
@@ -382,7 +440,8 @@ class PlayerActivity : AppCompatActivity() {
         uri: Uri,
         contentType: Int,
         userAgent: String?,
-        referer: String?
+        referer: String?,
+        requestHeaders: Map<String, String>
     ) {
         val exoPlayer = player ?: return
 
@@ -393,25 +452,41 @@ class PlayerActivity : AppCompatActivity() {
         currentUserAgent = smartUserAgent
         currentReferer = referer
 
-        val httpFactory = DefaultHttpDataSource.Factory().apply {
-            setUserAgent(smartUserAgent)
-            setConnectTimeoutMs(DEFAULT_TIMEOUT_MS)
-            setReadTimeoutMs(DEFAULT_TIMEOUT_MS)
-            setKeepPostFor302Redirects(true)
-            setAllowCrossProtocolRedirects(true)
+        val resolvedHeaders = buildResolvedRequestHeaders(
+            requestHeaders = requestHeaders,
+            smartUserAgent = smartUserAgent,
+            referer = referer,
+            stripAcceptEncodingForOkHttp = !useLegacyHttpTransport
+        )
 
-            if (!referer.isNullOrBlank()) {
-                setDefaultRequestProperties(mapOf("Referer" to referer))
-            }
+        val httpDataSourceFactory: DataSource.Factory = if (useLegacyHttpTransport) {
+            createLegacyHttpDataSourceFactory(resolvedHeaders, smartUserAgent)
+        } else {
+            createOkHttpDataSourceFactory(resolvedHeaders, smartUserAgent)
         }
 
-        val dataSourceFactory = DefaultDataSource.Factory(this, httpFactory)
+        val dataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
 
-        val mediaItem = MediaItem.fromUri(uri)
+        val mediaItem = MediaItem.Builder()
+            .setUri(uri)
+            .apply {
+                if (contentType == C.CONTENT_TYPE_HLS) {
+                    setMimeType(MimeTypes.APPLICATION_M3U8)
+                }
+            }
+            .build()
 
         val mediaSource = when (contentType) {
             C.CONTENT_TYPE_HLS -> {
-                HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+                // HLS 的 manifest、segment、key 等所有 DataSource 请求统一经过 resolver。
+                // 当主 m3u8 使用 sign/t/token 等鉴权参数，而分片省略 query 时，自动继承。
+                val hlsDataSourceFactory = ResolvingDataSource.Factory(
+                    dataSourceFactory,
+                    ResolvingDataSource.Resolver { dataSpec ->
+                        resolveHlsDataSpec(dataSpec, uri)
+                    }
+                )
+                HlsMediaSource.Factory(hlsDataSourceFactory).createMediaSource(mediaItem)
             }
             C.CONTENT_TYPE_RTSP -> {
                 RtspMediaSource.Factory().createMediaSource(mediaItem)
@@ -427,6 +502,165 @@ class PlayerActivity : AppCompatActivity() {
 
         exoPlayer.setMediaSource(mediaSource)
         exoPlayer.prepare()
+    }
+
+    private fun buildResolvedRequestHeaders(
+        requestHeaders: Map<String, String>,
+        smartUserAgent: String,
+        referer: String?,
+        stripAcceptEncodingForOkHttp: Boolean
+    ): Map<String, String> {
+        val result = linkedMapOf<String, String>()
+
+        requestHeaders.forEach { (key, value) ->
+            if (key.isBlank() || value.isBlank()) return@forEach
+
+            // OkHttp 只有在自己添加 Accept-Encoding 时才会透明解 gzip。
+            // 用户若填写 gzip/gzip, deflate 等值，直接透传会让 HLS parser 收到压缩后的清单。
+            // 去掉该项后 OkHttp 仍会在网络层发送 Accept-Encoding: gzip，并自动解压。
+            if (stripAcceptEncodingForOkHttp && key.equals("Accept-Encoding", ignoreCase = true)) {
+                if (!value.equals("identity", ignoreCase = true)) {
+                    Log.d(TAG, "OkHttp 传输层自动管理 Accept-Encoding，忽略自定义值: $value")
+                    return@forEach
+                }
+            }
+
+            putHeaderCaseInsensitive(result, key, value)
+        }
+
+        putHeaderCaseInsensitive(result, "User-Agent", smartUserAgent)
+        putHeaderCaseInsensitive(result, "Referer", referer)
+        return result
+    }
+
+    private fun createOkHttpDataSourceFactory(
+        headers: Map<String, String>,
+        userAgent: String
+    ): OkHttpDataSource.Factory {
+        val requiresHttp11 = headers.keys.any {
+            it.equals("Host", ignoreCase = true) ||
+                it.equals("Connection", ignoreCase = true)
+        }
+
+        val builder = OkHttpClient.Builder()
+            .connectTimeout(DEFAULT_TIMEOUT_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+            .readTimeout(DEFAULT_TIMEOUT_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+            .writeTimeout(DEFAULT_TIMEOUT_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+            .callTimeout(0L, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+
+        if (requiresHttp11) {
+            builder.protocols(listOf(Protocol.HTTP_1_1))
+        }
+
+        val client = builder.build()
+        return OkHttpDataSource.Factory(client)
+            .setUserAgent(userAgent)
+            .setDefaultRequestProperties(headers)
+    }
+
+    private fun createLegacyHttpDataSourceFactory(
+        headers: Map<String, String>,
+        userAgent: String
+    ): DefaultHttpDataSource.Factory {
+        return DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(DEFAULT_TIMEOUT_MS)
+            .setReadTimeoutMs(DEFAULT_TIMEOUT_MS)
+            .setAllowCrossProtocolRedirects(true)
+            .setUserAgent(userAgent)
+            .setDefaultRequestProperties(headers)
+    }
+
+    private fun resolveHlsDataSpec(dataSpec: DataSpec, masterUri: Uri): DataSpec {
+        val targetUri = dataSpec.uri
+        val baseQuery = masterUri.encodedQuery
+
+        if (baseQuery.isNullOrBlank() || targetUri.encodedQuery?.isNotBlank() == true) {
+            return dataSpec
+        }
+
+        if (!targetUri.scheme.equals(masterUri.scheme, ignoreCase = true) ||
+            !targetUri.host.equals(masterUri.host, ignoreCase = true)
+        ) {
+            return dataSpec
+        }
+
+        if (!hasAuthLikeQuery(masterUri)) {
+            return dataSpec
+        }
+
+        val resolvedUri = targetUri.buildUpon()
+            .encodedQuery(baseQuery)
+            .build()
+
+        Log.d(TAG, "HLS 子请求继承主 m3u8 鉴权参数: ${targetUri} -> ${resolvedUri}")
+        return dataSpec.withUri(resolvedUri)
+    }
+
+    private fun hasAuthLikeQuery(uri: Uri): Boolean {
+        return uri.queryParameterNames.any {
+            it.lowercase() in HLS_AUTH_QUERY_KEYS
+        }
+    }
+
+    private fun shouldRetryWithLegacyTransport(error: PlaybackException): Boolean {
+        return when (error.errorCode) {
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED -> true
+            else -> false
+        }
+    }
+
+    private fun readRequestHeadersExtra(): Map<String, String> {
+        val raw = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.getSerializableExtra("request_headers", HashMap::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getSerializableExtra("request_headers")
+        }
+
+        return when (raw) {
+            is Map<*, *> -> raw.entries.mapNotNull { entry ->
+                val key = entry.key as? String
+                val value = entry.value as? String
+                if (!key.isNullOrBlank() && value != null && value.isNotBlank()) {
+                    key to value
+                } else {
+                    null
+                }
+            }.toMap()
+            else -> emptyMap()
+        }
+    }
+
+    private fun mergeRequestHeaders(
+        headers: Map<String, String>,
+        userAgent: String?,
+        referer: String?
+    ): Map<String, String> {
+        val result = linkedMapOf<String, String>()
+        headers.forEach { (key, value) ->
+            if (key.isNotBlank() && value.isNotBlank()) {
+                result[key] = value
+            }
+        }
+        putHeaderCaseInsensitive(result, "User-Agent", userAgent)
+        putHeaderCaseInsensitive(result, "Referer", referer)
+        return result
+    }
+
+    private fun putHeaderCaseInsensitive(
+        headers: MutableMap<String, String>,
+        name: String,
+        value: String?
+    ) {
+        val oldKey = headers.keys.firstOrNull { it.equals(name, ignoreCase = true) }
+        if (oldKey != null) headers.remove(oldKey)
+        if (!value.isNullOrBlank()) headers[name] = value
     }
 
     private fun resolveUserAgent(uri: Uri, userAgent: String?): String {

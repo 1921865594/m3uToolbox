@@ -121,6 +121,91 @@
              android:inputType="textUri"
              android:id="@+id/editReferer" />
 
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="Origin（请求头）"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="例如 https://example.com"
+             android:inputType="textUri"
+             android:id="@+id/editOrigin" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="Host（请求头）"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="例如 example.com"
+             android:inputType="text"
+             android:id="@+id/editHost" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="Connection（请求头）"
+             android:textStyle="bold" />
+
+        <EditText
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:hint="例如 keep-alive"
+             android:inputType="text"
+             android:id="@+id/editConnection" />
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="wrap_content"
+             android:layout_marginTop="12dp"
+             android:text="自定义请求头"
+             android:textStyle="bold" />
+
+        <LinearLayout
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:orientation="vertical"
+             android:id="@+id/customHeadersContainer" />
+
+        <LinearLayout
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:orientation="horizontal"
+             android:layout_marginTop="8dp">
+
+            <Button
+                 android:layout_height="wrap_content"
+                 android:layout_width="0dp"
+                 android:layout_weight="1"
+                 android:id="@+id/btnAddRequestHeader"
+                 android:text="新建请求头" />
+
+            <Button
+                 android:layout_height="wrap_content"
+                 android:layout_width="0dp"
+                 android:layout_weight="1"
+                 android:layout_marginStart="8dp"
+                 android:id="@+id/btnParseRequestHeaders"
+                 android:text="请求头解析" />
+
+        </LinearLayout>
+
+        <TextView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:layout_marginTop="6dp"
+             android:text="提示：内置请求头为空时不会主动发送；自定义请求头同样只有填写值后才会发送。"
+             android:textSize="12sp" />
+
         <Button
              android:layout_height="wrap_content"
              android:layout_width="match_parent"
