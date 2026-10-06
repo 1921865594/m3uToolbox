@@ -1,4 +1,0 @@
-CompileFlags:
-  Add:
-    - "-I/storage/emulated/0/AndroidCSProjects/m3uToolbox"
-  CompilationDatabase: "/storage/emulated/0/AndroidCSProjects/m3uToolbox"
